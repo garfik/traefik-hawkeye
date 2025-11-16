@@ -1,0 +1,15 @@
+displayName: traefik-hawkeye
+type: middleware
+import: github.com/garfik/traefik-hawkeye
+summary: A lightweight, non-blocking analytics middleware that collects HTTP request data and sends it asynchronously in batches to an external analytics endpoint.
+testData:
+  endpoint: "http://example.com/analytics"
+  queueSize: 500
+  batchSize: 50
+  flushEveryMs: 3000
+  httpTimeoutMs: 300
+  includeRequestHeaders:
+    - "X-Request-Id"
+    - "X-Service-Name"
+  includeResponseHeaders:
+    - "X-Session-Id"
