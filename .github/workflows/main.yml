@@ -36,7 +36,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.mod') }}
           restore-keys: |
             ${{ runner.os }}-go-
 
@@ -47,13 +47,10 @@ jobs:
       - name: Install Yaegi ${{ env.YAEGI_VERSION }}
         run: curl -sfL https://raw.githubusercontent.com/traefik/yaegi/master/install.sh | bash -s -- -b $(go env GOPATH)/bin ${YAEGI_VERSION}
 
-      - name: Check and get dependencies
+      - name: Check dependencies
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || (echo "go.mod or go.sum changed, please run 'go mod tidy'" && exit 1)
-          go mod download
-          go mod vendor
-          git diff --exit-code ./vendor/ || (echo "vendor directory changed, please run 'go mod vendor'" && exit 1)
+          git diff --exit-code go.mod || (echo "go.mod changed, please run 'go mod tidy'" && exit 1)
 
       - name: Lint and Tests
         run: make
