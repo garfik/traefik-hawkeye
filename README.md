@@ -1,5 +1,11 @@
 # traefik-hawkeye
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/garfik/traefik-hawkeye)](go.mod)
+[![GitHub Release](https://img.shields.io/github/v/release/garfik/traefik-hawkeye?display_name=tag)](https://github.com/garfik/traefik-hawkeye/releases)
+[![CI](https://github.com/garfik/traefik-hawkeye/actions/workflows/main.yml/badge.svg)](https://github.com/garfik/traefik-hawkeye/actions/workflows/main.yml)
+[![Traefik Plugin](https://img.shields.io/badge/Traefik-Plugin-blue.svg)](https://doc.traefik.io/traefik/plugins/)
+
 A lightweight, non-blocking analytics middleware plugin for Traefik that collects HTTP request data and forwards it to an external analytics server.
 
 ## Features
