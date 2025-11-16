@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Pre-push hook to run checks before pushing to main
+# Install with: make install-hooks
+
+while read local_ref local_sha remote_ref remote_sha
+do
+    if [[ "$remote_ref" == "refs/heads/main" ]]; then
+        echo "⚠️  Pushing to main detected! Running checks..."
+        echo ""
+        
+        if ! make default; then
+            echo ""
+            echo "❌ Checks failed! Push aborted."
+            echo "Fix the errors and try again."
+            exit 1
+        fi
+        
+        if ! make yaegi_test; then
+            echo ""
+            echo "❌ Yaegi compatibility test failed! Push aborted."
+            echo "Fix the errors and try again."
+            exit 1
+        fi
+        
+        echo ""
+        echo "✅ All checks passed. Push allowed."
+    fi
+done
+
+exit 0
+
