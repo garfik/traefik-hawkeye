@@ -1,0 +1,40 @@
+services:
+  traefik:
+    image: traefik:v3.0
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "4000:4000"
+      - "8080:8080"
+    volumes:
+      - ./traefik.yml:/etc/traefik/traefik.yml:ro
+      - ..:/plugins-local/src/github.com/garfik/traefik-hawkeye:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - dev
+
+  whoami:
+    image: traefik/whoami
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.who.rule=Host(`localhost`)"
+      - "traefik.http.routers.who.entrypoints=web"
+      - "traefik.http.services.who.loadbalancer.server.port=80"
+
+      - "traefik.http.middlewares.hawk.plugin.hawkeye.endpoint=http://echo:80/collect"
+      - "traefik.http.middlewares.hawk.plugin.hawkeye.queueSize=10"
+      - "traefik.http.middlewares.hawk.plugin.hawkeye.batchSize=3"
+      - "traefik.http.middlewares.hawk.plugin.hawkeye.flushEveryMs=5000"
+      - "traefik.http.middlewares.hawk.plugin.hawkeye.httpTimeoutMs=300"
+
+      - "traefik.http.routers.who.middlewares=hawk"
+    networks:
+      - dev
+
+  echo:
+    image: ealen/echo-server:0.9.2
+    networks:
+      - dev
+
+networks:
+  dev: {}

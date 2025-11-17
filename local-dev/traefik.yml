@@ -1,0 +1,16 @@
+entryPoints:
+  web:
+    address: ":4000"
+
+api:
+  insecure: true
+  dashboard: true
+
+providers:
+  docker:
+    exposedByDefault: false
+
+experimental:
+  localPlugins:
+    hawkeye:
+      moduleName: github.com/garfik/traefik-hawkeye
