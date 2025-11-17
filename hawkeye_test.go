@@ -1,4 +1,4 @@
-package hawkeye
+package traefik_hawkeye
 
 import (
 	"context"

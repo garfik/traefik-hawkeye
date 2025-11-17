@@ -1,4 +1,4 @@
-displayName: traefik-hawkeye
+displayName: Hawkeye
 type: middleware
 import: github.com/garfik/traefik-hawkeye
 iconPath: assets/hawkeye-logo.svg
