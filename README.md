@@ -28,7 +28,7 @@ experimental:
   plugins:
     hawkeye:
       moduleName: github.com/garfik/traefik-hawkeye
-      version: v0.1.2
+      version: v0.1.3
 ```
 
 Traefik will automatically download and load the plugin from the GitHub repository. Make sure your Traefik instance has internet access to fetch the plugin.
@@ -133,56 +133,7 @@ Each HTTP request produces an event with the following structure:
 
 ## Development
 
-### Building
-
-To build the plugin:
-
-```bash
-make build
-```
-
-### Testing
-
-To run all tests:
-
-```bash
-make test
-```
-
-### Linting
-
-To run linter:
-
-```bash
-make lint
-```
-
-### How to test changes locally
-
-To test the plugin locally with a full Traefik setup:
-
-1. In one terminal, start the Docker Compose environment from the `local-dev` directory:
-
-```bash
-cd local-dev
-docker compose up
-```
-
-2. In another terminal, make a test request:
-
-```bash
-curl -H "Host: localhost" http://localhost:4000/
-```
-
-3. Check the echo server logs to verify that events are being received. You should see analytics events arriving at the echo server.
-
-**Note:** When making changes to the plugin code, remember to restart the Docker Compose environment for the changes to take effect
-
-## Requirements
-
-- Traefik v2.3+ (with plugin support)
-- Go 1.23+
-- Standard library only (no external dependencies)
+You're welcome to contribute! See [DEVELOPMENT.md](https://github.com/garfik/traefik-hawkeye/blob/main/DEVELOPMENT.md) for setup instructions on GitHub.
 
 ## 💚 Sponsorship
 
