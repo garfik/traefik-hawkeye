@@ -14,3 +14,10 @@ testData:
     - "X-Service-Name"
   includeResponseHeaders:
     - "X-Session-Id"
+  filterHostMode: "include"
+  filterHostList:
+    - "example.com"
+    - "api.example.com"
+  filterContentTypeMode: "exclude"
+  filterContentTypeList:
+    - "text/html"
