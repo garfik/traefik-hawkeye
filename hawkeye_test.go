@@ -744,3 +744,336 @@ func (w *testHijackerWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	// Return error to simulate hijack (we don't need actual connection for test)
 	return nil, nil, fmt.Errorf("test hijack")
 }
+
+func TestHostFilterInclude(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 300
+	config.FilterHostType = "include"
+	config.FilterHostList = []string{"example.com", "test.com"}
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recorder1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1.Host = "example.com"
+	handler.ServeHTTP(recorder1, req1)
+
+	recorder2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
+	req2.Host = "test.com"
+	handler.ServeHTTP(recorder2, req2)
+
+	recorder3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "http://other.com/test", nil)
+	req3.Host = "other.com"
+	handler.ServeHTTP(recorder3, req3)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 2 {
+		t.Errorf("expected 2 events, got %d", len(capturedEvents))
+	}
+
+	for _, event := range capturedEvents {
+		if event.Host != "example.com" && event.Host != "test.com" {
+			t.Errorf("unexpected host in event: %s", event.Host)
+		}
+	}
+}
+
+func TestHostFilterExclude(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 300
+	config.FilterHostType = "exclude"
+	config.FilterHostList = []string{"skip.com", "ignore.com"}
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recorder1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1.Host = "example.com"
+	handler.ServeHTTP(recorder1, req1)
+
+	recorder2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
+	req2.Host = "test.com"
+	handler.ServeHTTP(recorder2, req2)
+
+	recorder3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "http://skip.com/test", nil)
+	req3.Host = "skip.com"
+	handler.ServeHTTP(recorder3, req3)
+
+	recorder4 := httptest.NewRecorder()
+	req4 := httptest.NewRequest(http.MethodGet, "http://ignore.com/test", nil)
+	req4.Host = "ignore.com"
+	handler.ServeHTTP(recorder4, req4)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 2 {
+		t.Errorf("expected 2 events, got %d", len(capturedEvents))
+	}
+
+	for _, event := range capturedEvents {
+		if event.Host == "skip.com" || event.Host == "ignore.com" {
+			t.Errorf("excluded host found in events: %s", event.Host)
+		}
+		if event.Host != "example.com" && event.Host != "test.com" {
+			t.Errorf("unexpected host in event: %s", event.Host)
+		}
+	}
+}
+
+func TestHostFilterCaseInsensitive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 300
+	config.FilterHostType = "include"
+	config.FilterHostList = []string{"Example.COM", "TEST.com"}
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recorder1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1.Host = "example.com"
+	handler.ServeHTTP(recorder1, req1)
+
+	recorder2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "http://TEST.COM/test", nil)
+	req2.Host = "TEST.COM"
+	handler.ServeHTTP(recorder2, req2)
+
+	recorder3 := httptest.NewRecorder()
+	req3 := httptest.NewRequest(http.MethodGet, "http://other.com/test", nil)
+	req3.Host = "other.com"
+	handler.ServeHTTP(recorder3, req3)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 2 {
+		t.Errorf("expected 2 events, got %d", len(capturedEvents))
+	}
+}
+
+func TestHostFilterNoFilter(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 500
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recorder1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1.Host = "example.com"
+	handler.ServeHTTP(recorder1, req1)
+
+	recorder2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
+	req2.Host = "test.com"
+	handler.ServeHTTP(recorder2, req2)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 2 {
+		t.Errorf("expected 2 events, got %d", len(capturedEvents))
+	}
+}
+
+func TestHostFilterEmptyList(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 500
+	config.FilterHostType = "include"
+	config.FilterHostList = []string{}
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	recorder1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1.Host = "example.com"
+	handler.ServeHTTP(recorder1, req1)
+
+	time.Sleep(100 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 1 {
+		t.Errorf("expected 1 event, got %d", len(capturedEvents))
+	}
+}

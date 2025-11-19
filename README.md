@@ -6,7 +6,7 @@
 [![CI](https://github.com/garfik/traefik-hawkeye/actions/workflows/main.yml/badge.svg)](https://github.com/garfik/traefik-hawkeye/actions/workflows/main.yml)
 [![Traefik Plugin](https://img.shields.io/badge/Traefik-Plugin-blue.svg)](https://doc.traefik.io/traefik/plugins/)
 
-A lightweight, non-blocking analytics middleware plugin for Traefik that collects HTTP request data and forwards it to an external analytics server.
+A lightweight, non-blocking middleware plugin for Traefik that collects HTTP request data and forwards it to an external analytics server.
 
 ## Features
 
@@ -51,28 +51,26 @@ http:
           includeResponseHeaders:
             - "X-Request-Id"
             - "X-Session-Id"
+          filterHostType: "include"
+          filterHostList:
+            - "example.com"
+            - "api.example.com"
 ```
 
 ### Configuration Options
 
-| Field                    | Type     | Default | Description                                                  |
-| ------------------------ | -------- | ------- | ------------------------------------------------------------ |
-| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to  |
-| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping        |
-| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch        |
-| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing     |
-| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches       |
-| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events  |
-| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events |
+| Field                    | Type     | Default | Description                                                                             |
+| ------------------------ | -------- | ------- | --------------------------------------------------------------------------------------- |
+| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to                             |
+| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping                                   |
+| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch                                   |
+| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing                                |
+| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches                                  |
+| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events                             |
+| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events                            |
+| `filterHostType`         | string   | -       | Host filtering mode: `"include"` (only listed hosts) or `"exclude"` (all except listed) |
+| `filterHostList`         | []string | []      | List of hostnames to filter. Case-insensitive matching                                  |
 
-## Behavior
-
-- **Non-blocking queue**: If the event queue is full, new events are dropped (no blocking, no retries)
-- **Batching**: Events are sent when either:
-  - The batch reaches `batchSize` events, or
-  - The `flushEveryMs` timer fires
-- **Error handling**: HTTP send errors are silently ignored (fire-and-forget)
-- **Graceful shutdown**: On context cancellation, remaining events in the current batch are flushed
 
 ## Event Data Model
 

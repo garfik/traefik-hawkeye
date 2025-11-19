@@ -20,6 +20,8 @@ type Config struct {
 	HTTPTimeoutMs          int      `json:"httpTimeoutMs,omitempty"`
 	IncludeRequestHeaders  []string `json:"includeRequestHeaders,omitempty"`
 	IncludeResponseHeaders []string `json:"includeResponseHeaders,omitempty"`
+	FilterHostType         string   `json:"filterHostType,omitempty"`
+	FilterHostList         []string `json:"filterHostList,omitempty"`
 }
 
 type Event struct {
@@ -77,6 +79,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	if config.IncludeResponseHeaders == nil {
 		config.IncludeResponseHeaders = []string{}
 	}
+	if config.FilterHostList == nil {
+		config.FilterHostList = []string{}
+	}
+	for i, host := range config.FilterHostList {
+		config.FilterHostList[i] = strings.ToLower(host)
+	}
 
 	pluginCtx, cancel := context.WithCancel(ctx)
 
@@ -103,7 +111,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 }
 
 func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if isWebSocketUpgrade(req) {
+	if isWebSocketUpgrade(req) || !h.shouldLogHost(req.Host) {
 		h.next.ServeHTTP(rw, req)
 		return
 	}
@@ -255,6 +263,21 @@ func (h *hawkeye) flushBatch(batch []*Event) {
 func isWebSocketUpgrade(req *http.Request) bool {
 	return strings.ToLower(req.Header.Get("Upgrade")) == "websocket" &&
 		strings.Contains(strings.ToLower(req.Header.Get("Connection")), "upgrade")
+}
+
+func (h *hawkeye) shouldLogHost(host string) bool {
+	if len(h.config.FilterHostList) == 0 || h.config.FilterHostType == "" {
+		return true
+	}
+
+	hostLower := strings.ToLower(host)
+	for _, filterHost := range h.config.FilterHostList {
+		if filterHost == hostLower {
+			return h.config.FilterHostType == "include"
+		}
+	}
+
+	return h.config.FilterHostType == "exclude"
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and headers
