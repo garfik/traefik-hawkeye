@@ -20,8 +20,10 @@ type Config struct {
 	HTTPTimeoutMs          int      `json:"httpTimeoutMs,omitempty"`
 	IncludeRequestHeaders  []string `json:"includeRequestHeaders,omitempty"`
 	IncludeResponseHeaders []string `json:"includeResponseHeaders,omitempty"`
-	FilterHostType         string   `json:"filterHostType,omitempty"`
+	FilterHostMode         string   `json:"filterHostMode,omitempty"`
 	FilterHostList         []string `json:"filterHostList,omitempty"`
+	FilterContentTypeMode  string   `json:"filterContentTypeMode,omitempty"`
+	FilterContentTypeList  []string `json:"filterContentTypeList,omitempty"`
 }
 
 type Event struct {
@@ -35,6 +37,7 @@ type Event struct {
 	DurMs       int64             `json:"dur_ms"`
 	Ref         string            `json:"ref"`
 	UA          string            `json:"ua"`
+	ContentType string            `json:"content_type"`
 	RequestHdr  map[string]string `json:"request_hdr"`
 	ResponseHdr map[string]string `json:"response_hdr"`
 }
@@ -83,7 +86,13 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		config.FilterHostList = []string{}
 	}
 	for i, host := range config.FilterHostList {
-		config.FilterHostList[i] = strings.ToLower(host)
+		config.FilterHostList[i] = strings.ToLower(strings.TrimSpace(host))
+	}
+	if config.FilterContentTypeList == nil {
+		config.FilterContentTypeList = []string{}
+	}
+	for i, contentType := range config.FilterContentTypeList {
+		config.FilterContentTypeList[i] = strings.ToLower(strings.TrimSpace(contentType))
 	}
 
 	pluginCtx, cancel := context.WithCancel(ctx)
@@ -120,6 +129,11 @@ func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	wrapper := &responseWriter{ResponseWriter: rw, statusCode: http.StatusOK}
 	h.next.ServeHTTP(wrapper, req)
 
+	contentType := wrapper.headers.Get("Content-Type")
+	if !h.shouldLogContentType(contentType) {
+		return
+	}
+
 	duration := time.Since(startTime)
 	event := h.createEvent(req, wrapper.statusCode, wrapper.headers, duration.Milliseconds())
 
@@ -131,6 +145,8 @@ func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (h *hawkeye) createEvent(req *http.Request, statusCode int, responseHeaders http.Header, durMs int64) *Event {
+	contentType := normalizeContentType(responseHeaders.Get("Content-Type"))
+
 	event := &Event{
 		TS:          time.Now().UTC().Format(time.RFC3339),
 		IP:          extractIP(req),
@@ -142,6 +158,7 @@ func (h *hawkeye) createEvent(req *http.Request, statusCode int, responseHeaders
 		DurMs:       durMs,
 		Ref:         req.Referer(),
 		UA:          req.UserAgent(),
+		ContentType: contentType,
 		RequestHdr:  make(map[string]string),
 		ResponseHdr: make(map[string]string),
 	}
@@ -197,6 +214,15 @@ func extractScheme(req *http.Request) string {
 	}
 
 	return "http"
+}
+
+func normalizeContentType(contentType string) string {
+	// Remove charset and other parameters, keep only the main type
+	contentType = strings.TrimSpace(contentType)
+	if idx := strings.Index(contentType, ";"); idx != -1 {
+		contentType = strings.TrimSpace(contentType[:idx])
+	}
+	return strings.ToLower(contentType)
 }
 
 func copyHeaders(dst, src http.Header) {
@@ -266,18 +292,34 @@ func isWebSocketUpgrade(req *http.Request) bool {
 }
 
 func (h *hawkeye) shouldLogHost(host string) bool {
-	if len(h.config.FilterHostList) == 0 || h.config.FilterHostType == "" {
+	if len(h.config.FilterHostList) == 0 || h.config.FilterHostMode == "" {
 		return true
 	}
 
 	hostLower := strings.ToLower(host)
 	for _, filterHost := range h.config.FilterHostList {
 		if filterHost == hostLower {
-			return h.config.FilterHostType == "include"
+			return h.config.FilterHostMode == "include"
 		}
 	}
 
-	return h.config.FilterHostType == "exclude"
+	return h.config.FilterHostMode == "exclude"
+}
+
+func (h *hawkeye) shouldLogContentType(contentType string) bool {
+	if len(h.config.FilterContentTypeList) == 0 || h.config.FilterContentTypeMode == "" {
+		return true
+	}
+
+	contentTypeNormalized := normalizeContentType(contentType)
+
+	for _, filterContentType := range h.config.FilterContentTypeList {
+		if filterContentType == contentTypeNormalized {
+			return h.config.FilterContentTypeMode == "include"
+		}
+	}
+
+	return h.config.FilterContentTypeMode == "exclude"
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code and headers

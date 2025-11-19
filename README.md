@@ -51,26 +51,30 @@ http:
           includeResponseHeaders:
             - "X-Request-Id"
             - "X-Session-Id"
-          filterHostType: "include"
+          filterHostMode: "include"
           filterHostList:
             - "example.com"
             - "api.example.com"
+          filterContentTypeMode: "exclude"
+          filterContentTypeList:
+            - "text/html"
 ```
 
 ### Configuration Options
 
-| Field                    | Type     | Default | Description                                                                             |
-| ------------------------ | -------- | ------- | --------------------------------------------------------------------------------------- |
-| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to                             |
-| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping                                   |
-| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch                                   |
-| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing                                |
-| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches                                  |
-| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events                             |
-| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events                            |
-| `filterHostType`         | string   | -       | Host filtering mode: `"include"` (only listed hosts) or `"exclude"` (all except listed) |
-| `filterHostList`         | []string | []      | List of hostnames to filter. Case-insensitive matching                                  |
-
+| Field                    | Type     | Default | Description                                                                                                                                 |
+| ------------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to                                                                                 |
+| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping                                                                                       |
+| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch                                                                                       |
+| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing                                                                                    |
+| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches                                                                                      |
+| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events                                                                                 |
+| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events                                                                                |
+| `filterHostMode`         | string   | -       | Host filtering mode: `"include"` (only listed hosts) or `"exclude"` (all except listed)                                                     |
+| `filterHostList`         | []string | []      | List of hostnames to filter. Case-insensitive matching                                                                                      |
+| `filterContentTypeMode`  | string   | -       | Content-Type filtering mode: `"include"` (only listed types) or `"exclude"` (all except listed)                                             |
+| `filterContentTypeList`  | []string | []      | List of content types to filter (e.g., `"text/html"`, `"application/json"`). Parameters like charset are ignored. Case-insensitive matching |
 
 ## Event Data Model
 
@@ -88,6 +92,7 @@ Each HTTP request produces an event with the following structure:
   "dur_ms": 12,
   "ref": "https://google.com/",
   "ua": "Mozilla/5.0 ...",
+  "content_type": "application/json",
   "request_hdr": {
     "X-Service-Name": "..."
   },
@@ -110,6 +115,7 @@ Each HTTP request produces an event with the following structure:
 - `dur_ms`: Request duration in milliseconds
 - `ref`: Referer header (always included, empty string if not present)
 - `ua`: User-Agent header (always included, empty string if not present)
+- `content_type`: Response Content-Type header value (main type only, without charset or other parameters). Lowercase. Omitted if not present.
 - `request_hdr`: Map of headers from the request (only headers listed in `includeRequestHeaders` config). Always present, empty object `{}` if no headers are included.
 - `response_hdr`: Map of headers from the response (only headers listed in `includeResponseHeaders` config). Always present, empty object `{}` if no headers are included.
 
