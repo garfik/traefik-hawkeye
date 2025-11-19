@@ -3,7 +3,6 @@ package traefik_hawkeye
 import (
 	"bufio"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -14,25 +13,6 @@ import (
 	"testing"
 	"time"
 )
-
-func TestCreateConfig(t *testing.T) {
-	config := CreateConfig()
-	if config == nil {
-		t.Fatal("CreateConfig returned nil")
-	}
-	if config.QueueSize != 500 {
-		t.Errorf("expected QueueSize 500, got %d", config.QueueSize)
-	}
-	if config.BatchSize != 50 {
-		t.Errorf("expected BatchSize 50, got %d", config.BatchSize)
-	}
-	if config.FlushEveryMs != 3000 {
-		t.Errorf("expected FlushEveryMs 3000, got %d", config.FlushEveryMs)
-	}
-	if config.HTTPTimeoutMs != 300 {
-		t.Errorf("expected HTTPTimeoutMs 300, got %d", config.HTTPTimeoutMs)
-	}
-}
 
 func TestNew(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -54,103 +34,21 @@ func TestNew(t *testing.T) {
 	}
 }
 
-func TestExtractIP(t *testing.T) {
-	tests := []struct {
-		name     string
-		headers  map[string]string
-		remote   string
-		expected string
-	}{
-		{
-			name:     "X-Real-Ip header",
-			headers:  map[string]string{"X-Real-Ip": "192.168.1.1"},
-			remote:   "10.0.0.1:12345",
-			expected: "192.168.1.1",
-		},
-		{
-			name:     "X-Forwarded-For header",
-			headers:  map[string]string{"X-Forwarded-For": "192.168.1.2, 10.0.0.1"},
-			remote:   "10.0.0.1:12345",
-			expected: "192.168.1.2",
-		},
-		{
-			name:     "RemoteAddr fallback",
-			headers:  map[string]string{},
-			remote:   "192.168.1.3:12345",
-			expected: "192.168.1.3",
-		},
-		{
-			name:     "RemoteAddr without port",
-			headers:  map[string]string{},
-			remote:   "192.168.1.4",
-			expected: "192.168.1.4",
-		},
+func TestNewInvalidConfig(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {})
+
+	config := CreateConfig()
+	config.QueueSize = 0
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err == nil {
+		t.Fatal("expected error for invalid config, got nil")
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-			req.RemoteAddr = tt.remote
-
-			result := extractIP(req)
-			if result != tt.expected {
-				t.Errorf("expected %s, got %s", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestExtractScheme(t *testing.T) {
-	tests := []struct {
-		name     string
-		headers  map[string]string
-		tls      bool
-		expected string
-	}{
-		{
-			name:     "X-Forwarded-Proto header https",
-			headers:  map[string]string{"X-Forwarded-Proto": "https"},
-			tls:      false,
-			expected: "https",
-		},
-		{
-			name:     "X-Forwarded-Proto header http",
-			headers:  map[string]string{"X-Forwarded-Proto": "http"},
-			tls:      false,
-			expected: "http",
-		},
-		{
-			name:     "TLS present",
-			headers:  map[string]string{},
-			tls:      true,
-			expected: "https",
-		},
-		{
-			name:     "Default http",
-			headers:  map[string]string{},
-			tls:      false,
-			expected: "http",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-			if tt.tls {
-				req.TLS = &tls.ConnectionState{}
-			}
-
-			result := extractScheme(req)
-			if result != tt.expected {
-				t.Errorf("expected %s, got %s", tt.expected, result)
-			}
-		})
+	if handler != nil {
+		t.Fatal("expected nil handler when config is invalid")
 	}
 }
 
@@ -579,64 +477,6 @@ func TestServeHTTPWithResponseHeaders(t *testing.T) {
 	}
 }
 
-func TestIsWebSocketUpgrade(t *testing.T) {
-	tests := []struct {
-		name     string
-		headers  map[string]string
-		expected bool
-	}{
-		{
-			name:     "Valid WebSocket upgrade",
-			headers:  map[string]string{"Upgrade": "websocket", "Connection": "Upgrade"},
-			expected: true,
-		},
-		{
-			name:     "Valid WebSocket upgrade lowercase",
-			headers:  map[string]string{"Upgrade": "WebSocket", "Connection": "upgrade"},
-			expected: true,
-		},
-		{
-			name:     "Valid WebSocket upgrade with multiple connection values",
-			headers:  map[string]string{"Upgrade": "websocket", "Connection": "keep-alive, Upgrade"},
-			expected: true,
-		},
-		{
-			name:     "No upgrade header",
-			headers:  map[string]string{"Connection": "Upgrade"},
-			expected: false,
-		},
-		{
-			name:     "No connection header",
-			headers:  map[string]string{"Upgrade": "websocket"},
-			expected: false,
-		},
-		{
-			name:     "Wrong upgrade value",
-			headers:  map[string]string{"Upgrade": "http/2.0", "Connection": "Upgrade"},
-			expected: false,
-		},
-		{
-			name:     "No headers",
-			headers:  map[string]string{},
-			expected: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
-			for k, v := range tt.headers {
-				req.Header.Set(k, v)
-			}
-
-			result := isWebSocketUpgrade(req)
-			if result != tt.expected {
-				t.Errorf("expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
 func TestServeHTTPWithWebSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
@@ -745,7 +585,8 @@ func (w *testHijackerWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, fmt.Errorf("test hijack")
 }
 
-func TestHostFilterInclude(t *testing.T) {
+// TestFiltersIntegration tests that filters work correctly in the context of the full middleware
+func TestFiltersIntegration(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer func() {
 		cancel()
@@ -770,6 +611,10 @@ func TestHostFilterInclude(t *testing.T) {
 	defer server.Close()
 
 	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		contentType := req.URL.Query().Get("ct")
+		if contentType != "" {
+			rw.Header().Set("Content-Type", contentType)
+		}
 		rw.WriteHeader(http.StatusOK)
 	})
 
@@ -779,294 +624,32 @@ func TestHostFilterInclude(t *testing.T) {
 	config.BatchSize = 1
 	config.FlushEveryMs = 300
 	config.FilterHostMode = "include"
-	config.FilterHostList = []string{"example.com", "test.com"}
+	config.FilterHostList = []string{"example.com"}
+	config.FilterContentTypeMode = "include"
+	config.FilterContentTypeList = []string{"application/json"}
 
 	handler, err := New(ctx, next, config, "hawkeye")
 	if err != nil {
 		t.Fatalf("failed to create handler: %v", err)
 	}
 
+	// Should be logged: correct host + correct content type
 	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=application/json", nil)
 	req1.Host = "example.com"
 	handler.ServeHTTP(recorder1, req1)
 
+	// Should NOT be logged: wrong host
 	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
-	req2.Host = "test.com"
+	req2 := httptest.NewRequest(http.MethodGet, "http://other.com/test?ct=application/json", nil)
+	req2.Host = "other.com"
 	handler.ServeHTTP(recorder2, req2)
 
+	// Should NOT be logged: wrong content type
 	recorder3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "http://other.com/test", nil)
-	req3.Host = "other.com"
+	req3 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/html", nil)
+	req3.Host = "example.com"
 	handler.ServeHTTP(recorder3, req3)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-
-	for _, event := range capturedEvents {
-		if event.Host != "example.com" && event.Host != "test.com" {
-			t.Errorf("unexpected host in event: %s", event.Host)
-		}
-	}
-}
-
-func TestHostFilterExclude(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	config.FilterHostMode = "exclude"
-	config.FilterHostList = []string{"skip.com", "ignore.com"}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	req1.Host = "example.com"
-	handler.ServeHTTP(recorder1, req1)
-
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
-	req2.Host = "test.com"
-	handler.ServeHTTP(recorder2, req2)
-
-	recorder3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "http://skip.com/test", nil)
-	req3.Host = "skip.com"
-	handler.ServeHTTP(recorder3, req3)
-
-	recorder4 := httptest.NewRecorder()
-	req4 := httptest.NewRequest(http.MethodGet, "http://ignore.com/test", nil)
-	req4.Host = "ignore.com"
-	handler.ServeHTTP(recorder4, req4)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-
-	for _, event := range capturedEvents {
-		if event.Host == "skip.com" || event.Host == "ignore.com" {
-			t.Errorf("excluded host found in events: %s", event.Host)
-		}
-		if event.Host != "example.com" && event.Host != "test.com" {
-			t.Errorf("unexpected host in event: %s", event.Host)
-		}
-	}
-}
-
-func TestHostFilterCaseInsensitive(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	config.FilterHostMode = "include"
-	config.FilterHostList = []string{"Example.COM", "TEST.com"}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	req1.Host = "example.com"
-	handler.ServeHTTP(recorder1, req1)
-
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://TEST.COM/test", nil)
-	req2.Host = "TEST.COM"
-	handler.ServeHTTP(recorder2, req2)
-
-	recorder3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "http://other.com/test", nil)
-	req3.Host = "other.com"
-	handler.ServeHTTP(recorder3, req3)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-}
-
-func TestHostFilterNoFilter(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 500
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	req1.Host = "example.com"
-	handler.ServeHTTP(recorder1, req1)
-
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://test.com/test", nil)
-	req2.Host = "test.com"
-	handler.ServeHTTP(recorder2, req2)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-}
-
-func TestHostFilterEmptyList(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 500
-	config.FilterHostMode = "include"
-	config.FilterHostList = []string{}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
-	req1.Host = "example.com"
-	handler.ServeHTTP(recorder1, req1)
 
 	time.Sleep(100 * time.Millisecond)
 
@@ -1076,63 +659,15 @@ func TestHostFilterEmptyList(t *testing.T) {
 	if len(capturedEvents) != 1 {
 		t.Errorf("expected 1 event, got %d", len(capturedEvents))
 	}
-}
 
-func TestNormalizeContentType(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "simple type",
-			input:    "application/json",
-			expected: "application/json",
-		},
-		{
-			name:     "with charset",
-			input:    "text/html; charset=utf-8",
-			expected: "text/html",
-		},
-		{
-			name:     "with multiple parameters",
-			input:    "application/json; charset=utf-8; boundary=something",
-			expected: "application/json",
-		},
-		{
-			name:     "uppercase",
-			input:    "APPLICATION/JSON",
-			expected: "application/json",
-		},
-		{
-			name:     "mixed case",
-			input:    "Text/HTML; Charset=UTF-8",
-			expected: "text/html",
-		},
-		{
-			name:     "with spaces",
-			input:    "  text/html  ;  charset=utf-8  ",
-			expected: "text/html",
-		},
-		{
-			name:     "empty string",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "only spaces",
-			input:    "   ",
-			expected: "",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := normalizeContentType(tt.input)
-			if result != tt.expected {
-				t.Errorf("expected %q, got %q", tt.expected, result)
-			}
-		})
+	if len(capturedEvents) > 0 {
+		event := capturedEvents[0]
+		if event.Host != "example.com" {
+			t.Errorf("expected host example.com, got %s", event.Host)
+		}
+		if event.ContentType != "application/json" {
+			t.Errorf("expected content type application/json, got %s", event.ContentType)
+		}
 	}
 }
 
@@ -1195,349 +730,5 @@ func TestEventContentTypeEmpty(t *testing.T) {
 
 	if event.ContentType != "" {
 		t.Errorf("expected empty ContentType, got %s", event.ContentType)
-	}
-}
-
-func TestContentTypeFilterInclude(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		contentType := req.URL.Query().Get("ct")
-		if contentType != "" {
-			rw.Header().Set("Content-Type", contentType)
-		}
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	config.FilterContentTypeMode = "include"
-	config.FilterContentTypeList = []string{"application/json", "text/html"}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	// Should be included
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=application/json", nil)
-	handler.ServeHTTP(recorder1, req1)
-
-	// Should be included
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/html", nil)
-	handler.ServeHTTP(recorder2, req2)
-
-	// Should be excluded
-	recorder3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/plain", nil)
-	handler.ServeHTTP(recorder3, req3)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-
-	for _, event := range capturedEvents {
-		if event.ContentType != "application/json" && event.ContentType != "text/html" {
-			t.Errorf("unexpected content type in event: %s", event.ContentType)
-		}
-	}
-}
-
-func TestContentTypeFilterExclude(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		contentType := req.URL.Query().Get("ct")
-		if contentType != "" {
-			rw.Header().Set("Content-Type", contentType)
-		}
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	config.FilterContentTypeMode = "exclude"
-	config.FilterContentTypeList = []string{"text/html"}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	// Should be excluded
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/html", nil)
-	handler.ServeHTTP(recorder1, req1)
-
-	// Should be included
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=application/json", nil)
-	handler.ServeHTTP(recorder2, req2)
-
-	// Should be included
-	recorder3 := httptest.NewRecorder()
-	req3 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/plain", nil)
-	handler.ServeHTTP(recorder3, req3)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-
-	for _, event := range capturedEvents {
-		if event.ContentType == "text/html" {
-			t.Errorf("unexpected content type text/html in event (should be excluded)")
-		}
-	}
-}
-
-func TestContentTypeFilterCaseInsensitive(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		contentType := req.URL.Query().Get("ct")
-		if contentType != "" {
-			rw.Header().Set("Content-Type", contentType)
-		}
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	config.FilterContentTypeMode = "include"
-	config.FilterContentTypeList = []string{"application/json"}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	// Should be included (uppercase)
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=APPLICATION/JSON", nil)
-	handler.ServeHTTP(recorder1, req1)
-
-	// Should be included (mixed case)
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=Application/Json", nil)
-	handler.ServeHTTP(recorder2, req2)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-
-	for _, event := range capturedEvents {
-		if event.ContentType != "application/json" {
-			t.Errorf("expected content type application/json, got %s", event.ContentType)
-		}
-	}
-}
-
-func TestContentTypeFilterNoFilter(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		contentType := req.URL.Query().Get("ct")
-		if contentType != "" {
-			rw.Header().Set("Content-Type", contentType)
-		}
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 300
-	// No filter configured
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=application/json", nil)
-	handler.ServeHTTP(recorder1, req1)
-
-	recorder2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=text/html", nil)
-	handler.ServeHTTP(recorder2, req2)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 2 {
-		t.Errorf("expected 2 events, got %d", len(capturedEvents))
-	}
-}
-
-func TestContentTypeFilterEmptyList(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(100 * time.Millisecond)
-	}()
-
-	var capturedEvents []Event
-	var mu sync.Mutex
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var events []Event
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			return
-		}
-
-		mu.Lock()
-		capturedEvents = append(capturedEvents, events...)
-		mu.Unlock()
-
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		contentType := req.URL.Query().Get("ct")
-		if contentType != "" {
-			rw.Header().Set("Content-Type", contentType)
-		}
-		rw.WriteHeader(http.StatusOK)
-	})
-
-	config := CreateConfig()
-	config.Endpoint = server.URL
-	config.QueueSize = 10
-	config.BatchSize = 1
-	config.FlushEveryMs = 500
-	config.FilterContentTypeMode = "include"
-	config.FilterContentTypeList = []string{}
-
-	handler, err := New(ctx, next, config, "hawkeye")
-	if err != nil {
-		t.Fatalf("failed to create handler: %v", err)
-	}
-
-	recorder1 := httptest.NewRecorder()
-	req1 := httptest.NewRequest(http.MethodGet, "http://example.com/test?ct=application/json", nil)
-	handler.ServeHTTP(recorder1, req1)
-
-	time.Sleep(100 * time.Millisecond)
-
-	mu.Lock()
-	defer mu.Unlock()
-
-	if len(capturedEvents) != 1 {
-		t.Errorf("expected 1 event, got %d", len(capturedEvents))
 	}
 }
