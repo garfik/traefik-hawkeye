@@ -28,7 +28,7 @@ experimental:
   plugins:
     hawkeye:
       moduleName: github.com/garfik/traefik-hawkeye
-      version: v0.1.1
+      version: v0.1.2
 ```
 
 Traefik will automatically download and load the plugin from the GitHub repository. Make sure your Traefik instance has internet access to fetch the plugin.

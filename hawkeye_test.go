@@ -1,9 +1,12 @@
 package traefik_hawkeye
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -574,4 +577,170 @@ func TestServeHTTPWithResponseHeaders(t *testing.T) {
 	if event.ResponseHdr["X-Session-Id"] != "session-789" {
 		t.Errorf("expected X-Session-Id session-789, got %s", event.ResponseHdr["X-Session-Id"])
 	}
+}
+
+func TestIsWebSocketUpgrade(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		expected bool
+	}{
+		{
+			name:     "Valid WebSocket upgrade",
+			headers:  map[string]string{"Upgrade": "websocket", "Connection": "Upgrade"},
+			expected: true,
+		},
+		{
+			name:     "Valid WebSocket upgrade lowercase",
+			headers:  map[string]string{"Upgrade": "WebSocket", "Connection": "upgrade"},
+			expected: true,
+		},
+		{
+			name:     "Valid WebSocket upgrade with multiple connection values",
+			headers:  map[string]string{"Upgrade": "websocket", "Connection": "keep-alive, Upgrade"},
+			expected: true,
+		},
+		{
+			name:     "No upgrade header",
+			headers:  map[string]string{"Connection": "Upgrade"},
+			expected: false,
+		},
+		{
+			name:     "No connection header",
+			headers:  map[string]string{"Upgrade": "websocket"},
+			expected: false,
+		},
+		{
+			name:     "Wrong upgrade value",
+			headers:  map[string]string{"Upgrade": "http/2.0", "Connection": "Upgrade"},
+			expected: false,
+		},
+		{
+			name:     "No headers",
+			headers:  map[string]string{},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://example.com", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			result := isWebSocketUpgrade(req)
+			if result != tt.expected {
+				t.Errorf("expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestServeHTTPWithWebSocket(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var eventsReceived int
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return // Ignore decode errors
+		}
+
+		mu.Lock()
+		eventsReceived += len(events)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	originalWriter := &testHijackerWriter{
+		ResponseWriter: httptest.NewRecorder(),
+	}
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		// Simulate WebSocket handler - just return switching protocols status
+		rw.WriteHeader(http.StatusSwitchingProtocols)
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 500
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Test WebSocket upgrade request - should NOT create event
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/ws", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Sec-WebSocket-Key", "test-key")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+
+	handler.ServeHTTP(originalWriter, req)
+
+	// Wait a bit to ensure no events are sent
+	time.Sleep(600 * time.Millisecond)
+
+	mu.Lock()
+	wsEvents := eventsReceived
+	mu.Unlock()
+
+	if wsEvents != 0 {
+		t.Errorf("WebSocket request should not create events, but got %d events", wsEvents)
+	}
+
+	// Test regular HTTP request - should create event
+	recorder := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "http://example.com/test", nil)
+
+	next2 := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.WriteHeader(http.StatusOK)
+		_, _ = rw.Write([]byte("OK"))
+	})
+
+	handler2, err := New(ctx, next2, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	handler2.ServeHTTP(recorder, req2)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", recorder.Code)
+	}
+
+	// Wait for event to be sent
+	time.Sleep(600 * time.Millisecond)
+
+	mu.Lock()
+	httpEvents := eventsReceived
+	mu.Unlock()
+
+	if httpEvents != 1 {
+		t.Errorf("HTTP request should create 1 event, but got %d events", httpEvents)
+	}
+}
+
+// testHijackerWriter is a test ResponseWriter that implements Hijacker
+type testHijackerWriter struct {
+	http.ResponseWriter
+}
+
+func (w *testHijackerWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	// Return error to simulate hijack (we don't need actual connection for test)
+	return nil, nil, fmt.Errorf("test hijack")
 }

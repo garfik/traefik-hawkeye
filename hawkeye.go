@@ -1,9 +1,11 @@
 package traefik_hawkeye
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"strings"
@@ -101,6 +103,11 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 }
 
 func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
+	if isWebSocketUpgrade(req) {
+		h.next.ServeHTTP(rw, req)
+		return
+	}
+
 	startTime := time.Now()
 	wrapper := &responseWriter{ResponseWriter: rw, statusCode: http.StatusOK}
 	h.next.ServeHTTP(wrapper, req)
@@ -184,7 +191,6 @@ func extractScheme(req *http.Request) string {
 	return "http"
 }
 
-// copyHeaders copies all headers from src to dst
 func copyHeaders(dst, src http.Header) {
 	for k, v := range src {
 		dst[k] = make([]string, len(v))
@@ -246,6 +252,11 @@ func (h *hawkeye) flushBatch(batch []*Event) {
 	}(batchCopy)
 }
 
+func isWebSocketUpgrade(req *http.Request) bool {
+	return strings.ToLower(req.Header.Get("Upgrade")) == "websocket" &&
+		strings.Contains(strings.ToLower(req.Header.Get("Connection")), "upgrade")
+}
+
 // responseWriter wraps http.ResponseWriter to capture status code and headers
 type responseWriter struct {
 	http.ResponseWriter
@@ -282,4 +293,11 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 		copyHeaders(rw.headers, rw.ResponseWriter.Header())
 	}
 	return rw.ResponseWriter.Write(b)
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hijacker, ok := rw.ResponseWriter.(http.Hijacker); ok {
+		return hijacker.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support Hijacker")
 }
