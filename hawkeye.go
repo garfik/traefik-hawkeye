@@ -64,12 +64,13 @@ func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	h.next.ServeHTTP(wrapper, req)
 
 	contentType := wrapper.headers.Get("Content-Type")
-	if !h.filter.ShouldLog(contentType) {
+	if !h.filter.ShouldLog(req, contentType) {
 		return
 	}
 
+	trackingPixelPath := h.filter.ExtractTrackingPixelPath(req)
 	duration := time.Since(startTime)
-	event := h.createEvent(req, wrapper.statusCode, wrapper.headers, duration.Milliseconds())
+	event := h.createEvent(req, wrapper.statusCode, wrapper.headers, duration.Milliseconds(), trackingPixelPath)
 
 	select {
 	case h.eventChan <- event:
@@ -78,8 +79,15 @@ func (h *hawkeye) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (h *hawkeye) createEvent(req *http.Request, statusCode int, responseHeaders http.Header, durMs int64) *Event {
+func (h *hawkeye) createEvent(req *http.Request, statusCode int, responseHeaders http.Header, durMs int64, trackingPixelPath string) *Event {
 	contentType := normalizeContentType(responseHeaders.Get("Content-Type"))
+
+	// Use tracking pixel path if provided, otherwise use actual request path
+	eventPath := req.URL.Path
+	if trackingPixelPath != "" {
+		eventPath = trackingPixelPath
+		contentType = "text/html"
+	}
 
 	event := &Event{
 		TS:          time.Now().UTC().Format(time.RFC3339),
@@ -87,7 +95,7 @@ func (h *hawkeye) createEvent(req *http.Request, statusCode int, responseHeaders
 		Method:      req.Method,
 		Scheme:      extractScheme(req),
 		Host:        req.Host,
-		Path:        req.URL.Path,
+		Path:        eventPath,
 		Status:      statusCode,
 		DurMs:       durMs,
 		Ref:         req.Referer(),

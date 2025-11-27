@@ -17,6 +17,7 @@ type Config struct {
 	FilterHostList         []string `json:"filterHostList,omitempty"`
 	FilterContentTypeMode  string   `json:"filterContentTypeMode,omitempty"`
 	FilterContentTypeList  []string `json:"filterContentTypeList,omitempty"`
+	TrackingPixelURL       string   `json:"trackingPixelURL,omitempty"`
 }
 
 func CreateConfig() *Config {

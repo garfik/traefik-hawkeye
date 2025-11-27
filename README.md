@@ -28,7 +28,7 @@ experimental:
   plugins:
     hawkeye:
       moduleName: github.com/garfik/traefik-hawkeye
-      version: v0.1.3
+      version: v0.1.4
 ```
 
 Traefik will automatically download and load the plugin from the GitHub repository. Make sure your Traefik instance has internet access to fetch the plugin.
@@ -58,23 +58,25 @@ http:
           filterContentTypeMode: "exclude"
           filterContentTypeList:
             - "text/html"
+          trackingPixelURL: "/hawk.png"
 ```
 
 ### Configuration Options
 
-| Field                    | Type     | Default | Description                                                                                                                                 |
-| ------------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to                                                                                 |
-| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping                                                                                       |
-| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch                                                                                       |
-| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing                                                                                    |
-| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches                                                                                      |
-| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events                                                                                 |
-| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events                                                                                |
-| `filterHostMode`         | string   | -       | Host filtering mode: `"include"` (only listed hosts) or `"exclude"` (all except listed)                                                     |
-| `filterHostList`         | []string | []      | List of hostnames to filter. Case-insensitive matching                                                                                      |
-| `filterContentTypeMode`  | string   | -       | Content-Type filtering mode: `"include"` (only listed types) or `"exclude"` (all except listed)                                             |
-| `filterContentTypeList`  | []string | []      | List of content types to filter (e.g., `"text/html"`, `"application/json"`). Parameters like charset are ignored. Case-insensitive matching |
+| Field                    | Type     | Default | Description                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------ | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`               | string   | -       | **Required.** The analytics endpoint URL to send batches to                                                                                                                                                                                                                                                                                                                        |
+| `queueSize`              | int      | 500     | Maximum number of events in the queue before dropping                                                                                                                                                                                                                                                                                                                              |
+| `batchSize`              | int      | 50      | Number of events to accumulate before sending a batch                                                                                                                                                                                                                                                                                                                              |
+| `flushEveryMs`           | int      | 3000    | Time interval (milliseconds) for periodic batch flushing                                                                                                                                                                                                                                                                                                                           |
+| `httpTimeoutMs`          | int      | 300     | HTTP client timeout (milliseconds) for sending batches                                                                                                                                                                                                                                                                                                                             |
+| `includeRequestHeaders`  | []string | []      | List of HTTP header names from request to include in events                                                                                                                                                                                                                                                                                                                        |
+| `includeResponseHeaders` | []string | []      | List of HTTP header names from response to include in events                                                                                                                                                                                                                                                                                                                       |
+| `filterHostMode`         | string   | -       | Host filtering mode: `"include"` (only listed hosts) or `"exclude"` (all except listed)                                                                                                                                                                                                                                                                                            |
+| `filterHostList`         | []string | []      | List of hostnames to filter. Case-insensitive matching                                                                                                                                                                                                                                                                                                                             |
+| `filterContentTypeMode`  | string   | -       | Content-Type filtering mode: `"include"` (only listed types) or `"exclude"` (all except listed)                                                                                                                                                                                                                                                                                    |
+| `filterContentTypeList`  | []string | []      | List of content types to filter (e.g., `"text/html"`, `"application/json"`). Parameters like charset are ignored. Case-insensitive matching                                                                                                                                                                                                                                        |
+| `trackingPixelURL`       | string   | -       | URL path for tracking pixel (e.g., `"/hawk.png"`). When a request to this URL includes a valid `u` query parameter with a URL-encoded path, the event will be logged as if the user visited the path from `u` parameter instead of the tracking pixel URL. Useful for SPA applications to track client-side navigation. See [Tracking Pixel](#tracking-pixel) section for details. |
 
 ## Event Data Model
 
@@ -130,6 +132,50 @@ Each HTTP request produces an event with the following structure:
 1. `X-Forwarded-Proto` header
 2. TLS presence check (`req.TLS != nil`)
 3. Default: `"http"`
+
+## Tracking Pixel
+
+The `trackingPixelURL` feature is designed for Single Page Applications (SPA) to track client-side navigation. In SPAs, route changes happen on the client side without full page reloads, so traditional server-side analytics miss these navigation events.
+
+### How It Works
+
+When `trackingPixelURL` is configured (e.g., `"/hawk.png"`), the middleware intercepts requests to this URL. If the request includes a valid `u` query parameter containing a URL-encoded path, the event is logged as if the user visited the path from the `u` parameter, not the tracking pixel URL itself.
+
+**Example request:**
+
+```
+GET /hawk.png?u=%2Fmap%2F3a6eaf87-3243-4184-8e9d-34b5e002790c&_=mignsq2wbutgh0ulkka
+```
+
+**Resulting event:**
+
+- `path`: `/map/3a6eaf87-3243-4184-8e9d-34b5e002790c` (from `u` parameter)
+- `content_type`: `text/html` (always set for tracking pixel events)
+
+### Usage in SPA
+
+In your SPA application, track route changes by making a request to the tracking pixel URL:
+
+```javascript
+// Track page view on route change
+function trackPageView(path) {
+  const encodedPath = encodeURIComponent(path);
+  const img = new Image();
+  img.src = `/hawk.png?u=${encodedPath}&_=${Date.now()}`;
+}
+
+// Example: React Router
+router.subscribe((state) => {
+  trackPageView(state.location.pathname);
+});
+```
+
+### Important Notes
+
+- If the `u` parameter is missing, invalid, or empty, the request is processed normally (subject to Content-Type filtering)
+- Tracking pixel requests with valid `u` parameter always bypass Content-Type filters and are always logged
+- The actual HTTP request to `/hawk.png` is passed through unchanged - only the logged event is modified, so don't forget to actually keep such URL valid, e.g. add an empty PNG file or handle this on the server
+- The `content_type` field in the event is always set to `text/html` for tracking pixel events, regardless of the actual response Content-Type
 
 ## Development
 

@@ -96,12 +96,14 @@ func TestFilter_ShouldLog(t *testing.T) {
 	tests := []struct {
 		name        string
 		config      *Config
+		req         *http.Request
 		contentType string
 		expected    bool
 	}{
 		{
 			name:        "No filter - should log",
 			config:      CreateConfig(),
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json",
 			expected:    true,
 		},
@@ -111,6 +113,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json",
 			expected:    true,
 		},
@@ -120,6 +123,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "text/html",
 			expected:    false,
 		},
@@ -129,6 +133,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "exclude",
 				FilterContentTypeList: []string{"text/html"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "text/html",
 			expected:    false,
 		},
@@ -138,6 +143,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "exclude",
 				FilterContentTypeList: []string{"text/html"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json",
 			expected:    true,
 		},
@@ -147,6 +153,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json; charset=utf-8",
 			expected:    true,
 		},
@@ -156,6 +163,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "APPLICATION/JSON",
 			expected:    true,
 		},
@@ -165,6 +173,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json",
 			expected:    true,
 		},
@@ -174,6 +183,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "application/json",
 			expected:    true,
 		},
@@ -183,7 +193,52 @@ func TestFilter_ShouldLog(t *testing.T) {
 				FilterContentTypeMode: "include",
 				FilterContentTypeList: []string{"application/json"},
 			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/test", nil),
 			contentType: "",
+			expected:    false,
+		},
+		{
+			name: "Tracking pixel with valid u - should log (bypasses content type filter)",
+			config: &Config{
+				TrackingPixelURL:      "/hawk.png",
+				FilterContentTypeMode: "exclude",
+				FilterContentTypeList: []string{"image/png"},
+			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/hawk.png?u=%2F", nil),
+			contentType: "image/png",
+			expected:    true,
+		},
+		{
+			name: "Tracking pixel without u - should apply normal filter",
+			config: &Config{
+				TrackingPixelURL:      "/hawk.png",
+				FilterContentTypeMode: "exclude",
+				FilterContentTypeList: []string{"image/png"},
+			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/hawk.png", nil),
+			contentType: "image/png",
+			expected:    false,
+		},
+		{
+			name: "Tracking pixel with invalid u - should apply normal filter",
+			config: &Config{
+				TrackingPixelURL:      "/hawk.png",
+				FilterContentTypeMode: "exclude",
+				FilterContentTypeList: []string{"image/png"},
+			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/hawk.png?u=%ZZ", nil),
+			contentType: "image/png",
+			expected:    false,
+		},
+		{
+			name: "Tracking pixel different path - should apply normal filter",
+			config: &Config{
+				TrackingPixelURL:      "/hawk.png",
+				FilterContentTypeMode: "exclude",
+				FilterContentTypeList: []string{"image/png"},
+			},
+			req:         httptest.NewRequest(http.MethodGet, "http://example.com/other.png?u=%2Fmap%2Ftest", nil),
+			contentType: "image/png",
 			expected:    false,
 		},
 	}
@@ -191,7 +246,7 @@ func TestFilter_ShouldLog(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			filter := NewFilter(tt.config)
-			result := filter.ShouldLog(tt.contentType)
+			result := filter.ShouldLog(tt.req, tt.contentType)
 			if result != tt.expected {
 				t.Errorf("expected %v, got %v", tt.expected, result)
 			}

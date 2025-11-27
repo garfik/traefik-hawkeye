@@ -215,7 +215,7 @@ func TestEventCreation(t *testing.T) {
 	req.Header.Set("X-Service-Name", "test-service")
 	req.Header.Set("X-Other-Header", "should-not-appear")
 
-	event := h.createEvent(req, http.StatusNotFound, make(http.Header), 42)
+	event := h.createEvent(req, http.StatusNotFound, make(http.Header), 42, "")
 
 	if event.IP != "192.168.1.100" {
 		t.Errorf("expected IP 192.168.1.100, got %s", event.IP)
@@ -351,7 +351,7 @@ func TestIncludeResponseHeaders(t *testing.T) {
 	responseHeaders.Set("X-Session-Id", "session-456")
 	responseHeaders.Set("X-Other-Header", "should-not-appear")
 
-	event := h.createEvent(req, http.StatusOK, responseHeaders, 100)
+	event := h.createEvent(req, http.StatusOK, responseHeaders, 100, "")
 
 	if event.ResponseHdr["X-Request-Id"] != "response-req-123" {
 		t.Errorf("expected X-Request-Id response-req-123, got %s", event.ResponseHdr["X-Request-Id"])
@@ -394,7 +394,7 @@ func TestIncludeRequestAndResponseHeaders(t *testing.T) {
 	responseHeaders := make(http.Header)
 	responseHeaders.Set("X-Request-Id", "response-req-123")
 
-	event := h.createEvent(req, http.StatusOK, responseHeaders, 100)
+	event := h.createEvent(req, http.StatusOK, responseHeaders, 100, "")
 
 	if event.RequestHdr["X-Request-Id"] != "request-req-123" {
 		t.Errorf("expected X-Request-Id request-req-123 (from request), got %s", event.RequestHdr["X-Request-Id"])
@@ -697,7 +697,7 @@ func TestEventContentType(t *testing.T) {
 	responseHeaders := make(http.Header)
 	responseHeaders.Set("Content-Type", "application/json; charset=utf-8")
 
-	event := h.createEvent(req, http.StatusOK, responseHeaders, 42)
+	event := h.createEvent(req, http.StatusOK, responseHeaders, 42, "")
 
 	if event.ContentType != "application/json" {
 		t.Errorf("expected ContentType application/json, got %s", event.ContentType)
@@ -726,9 +726,82 @@ func TestEventContentTypeEmpty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "https://example.com/api/test", nil)
 	responseHeaders := make(http.Header)
 
-	event := h.createEvent(req, http.StatusOK, responseHeaders, 42)
+	event := h.createEvent(req, http.StatusOK, responseHeaders, 42, "")
 
 	if event.ContentType != "" {
 		t.Errorf("expected empty ContentType, got %s", event.ContentType)
+	}
+}
+
+func TestTrackingPixelWithValidU(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		cancel()
+		time.Sleep(100 * time.Millisecond)
+	}()
+
+	var capturedEvents []Event
+	var mu sync.Mutex
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var events []Event
+		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+			return
+		}
+
+		mu.Lock()
+		capturedEvents = append(capturedEvents, events...)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	next := http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
+		rw.Header().Set("Content-Type", "image/png")
+		rw.WriteHeader(http.StatusOK)
+		_, _ = rw.Write([]byte("fake image"))
+	})
+
+	config := CreateConfig()
+	config.Endpoint = server.URL
+	config.QueueSize = 10
+	config.BatchSize = 1
+	config.FlushEveryMs = 300
+	config.TrackingPixelURL = "/hawk.png"
+	config.FilterContentTypeMode = "exclude"
+	config.FilterContentTypeList = []string{"image/png"} // Normally would exclude image/png
+
+	handler, err := New(ctx, next, config, "hawkeye")
+	if err != nil {
+		t.Fatalf("failed to create handler: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Request to tracking pixel with valid u parameter
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/hawk.png?u=%2Fmap%2F3a6eaf87-3243-4184-8e9d-34b5e002790c&_=mignsq2wbutgh0ulkka", nil)
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Errorf("expected status OK, got %d", recorder.Code)
+	}
+
+	time.Sleep(400 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(capturedEvents) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(capturedEvents))
+	}
+
+	event := capturedEvents[0]
+	if event.Path != "/map/3a6eaf87-3243-4184-8e9d-34b5e002790c" {
+		t.Errorf("expected path /map/3a6eaf87-3243-4184-8e9d-34b5e002790c, got %s", event.Path)
+	}
+	if event.ContentType != "text/html" {
+		t.Errorf("expected ContentType text/html, got %s", event.ContentType)
 	}
 }

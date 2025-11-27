@@ -21,3 +21,4 @@ testData:
   filterContentTypeMode: "exclude"
   filterContentTypeList:
     - "text/html"
+  trackingPixelURL: "/hawk.png"

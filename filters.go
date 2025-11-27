@@ -2,6 +2,7 @@ package traefik_hawkeye
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -30,8 +31,26 @@ func (f *Filter) ShouldWrap(req *http.Request) bool {
 }
 
 // ShouldLog answers if the event should be logged after we got the response
-func (f *Filter) ShouldLog(contentType string) bool {
+func (f *Filter) ShouldLog(req *http.Request, contentType string) bool {
+	// If this is a tracking pixel, then always log
+	if f.ExtractTrackingPixelPath(req) != "" {
+		return true
+	}
+
 	return f.shouldLogContentType(contentType)
+}
+
+// ExtractTrackingPixelPath extracts the path from u parameter if this is a valid tracking pixel request
+func (f *Filter) ExtractTrackingPixelPath(req *http.Request) string {
+	if f.config.TrackingPixelURL != "" && req.URL.Path == f.config.TrackingPixelURL {
+		if uParam := req.URL.Query().Get("u"); uParam != "" {
+			decodedPath, err := url.QueryUnescape(uParam)
+			if err == nil && decodedPath != "" {
+				return decodedPath
+			}
+		}
+	}
+	return ""
 }
 
 func (f *Filter) shouldLogHost(host string) bool {
